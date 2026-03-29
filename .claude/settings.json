@@ -1,0 +1,15 @@
+{
+  "historyStorage": "local",
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(gh repo:*)",
+      "Bash(git remote:*)",
+      "Bash(git push:*)"
+    ]
+  },
+  "storeSessionInProject": true
+}
+
+

@@ -1,0 +1,18 @@
+server:
+  port: "8083"
+
+mysql:
+  host: "127.0.0.1"
+  port: "3306"
+  user: "root"
+  password: "001020"
+  dbname: "hmdp"
+
+redis:
+  host: "localhost"
+  port: "6379"
+  password: "001020"
+  db: 0
+
+grpc:
+  port: "50053"

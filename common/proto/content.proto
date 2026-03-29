@@ -1,0 +1,276 @@
+syntax = "proto3";
+
+package content;
+
+option go_package = "hmdp-microservices/common/proto";
+
+// 内容服务接口
+service ContentService {
+  // 获取博客信息
+  rpc GetBlog(GetBlogRequest) returns (GetBlogResponse);
+  // 分页查询热门博客
+  rpc ListHotBlogs(ListHotBlogsRequest) returns (ListHotBlogsResponse);
+  // 查询用户博客
+  rpc ListUserBlogs(ListUserBlogsRequest) returns (ListUserBlogsResponse);
+  // 获取关注feed
+  rpc ListFollowBlogs(ListFollowBlogsRequest) returns (ListFollowBlogsResponse);
+  // 点赞博客
+  rpc LikeBlog(LikeBlogRequest) returns (LikeBlogResponse);
+  // 取消点赞
+  rpc UnlikeBlog(UnlikeBlogRequest) returns (UnlikeBlogResponse);
+  // 发布博客
+  rpc CreateBlog(CreateBlogRequest) returns (CreateBlogResponse);
+  // 获取博客评论
+  rpc ListBlogComments(ListBlogCommentsRequest) returns (ListBlogCommentsResponse);
+  // 发表评论
+  rpc CreateComment(CreateCommentRequest) returns (CreateCommentResponse);
+  // 关注用户
+  rpc FollowUser(FollowUserRequest) returns (FollowUserResponse);
+  // 取消关注
+  rpc UnfollowUser(UnfollowUserRequest) returns (UnfollowUserResponse);
+  // 获取粉丝列表
+  rpc ListFollowers(ListFollowersRequest) returns (ListFollowersResponse);
+  // 获取关注列表
+  rpc ListFollowings(ListFollowingsRequest) returns (ListFollowingsResponse);
+  // 获取共同关注
+  rpc ListCommonFollows(ListCommonFollowsRequest) returns (ListCommonFollowsResponse);
+  // 检查是否关注
+  rpc CheckFollow(CheckFollowRequest) returns (CheckFollowResponse);
+}
+
+// 获取博客请求
+message GetBlogRequest {
+  int64 id = 1;
+}
+
+// 获取博客响应
+message GetBlogResponse {
+  int32 code = 1;
+  string message = 2;
+  Blog data = 3;
+}
+
+// 博客信息
+message Blog {
+  int64 id = 1;
+  int64 userId = 2;
+  string title = 3;
+  string content = 4;
+  string images = 5;
+  int32 liked = 6;
+  int32 status = 7;
+  int64 createTime = 8;
+  int64 updateTime = 9;
+  UserInfo user = 10;
+  bool isLike = 11;
+}
+
+// 用户信息
+message UserInfo {
+  int64 id = 1;
+  string nickName = 2;
+  string icon = 3;
+}
+
+// 分页查询热门博客请求
+message ListHotBlogsRequest {
+  int32 current = 1;
+  int32 size = 2;
+}
+
+// 分页查询热门博客响应
+message ListHotBlogsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Blog data = 3;
+  int32 total = 4;
+}
+
+// 查询用户博客请求
+message ListUserBlogsRequest {
+  int64 userId = 1;
+  int32 current = 2;
+  int32 size = 3;
+}
+
+// 查询用户博客响应
+message ListUserBlogsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Blog data = 3;
+  int32 total = 4;
+}
+
+// 获取关注feed请求
+message ListFollowBlogsRequest {
+  int64 userId = 1;
+  int32 current = 2;
+  int32 size = 3;
+}
+
+// 获取关注feed响应
+message ListFollowBlogsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Blog data = 3;
+  int32 total = 4;
+}
+
+// 点赞博客请求
+message LikeBlogRequest {
+  int64 blogId = 1;
+  int64 userId = 2;
+}
+
+// 点赞博客响应
+message LikeBlogResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 取消点赞请求
+message UnlikeBlogRequest {
+  int64 blogId = 1;
+  int64 userId = 2;
+}
+
+// 取消点赞响应
+message UnlikeBlogResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 发布博客请求
+message CreateBlogRequest {
+  int64 userId = 1;
+  string title = 2;
+  string content = 3;
+  string images = 4;
+}
+
+// 发布博客响应
+message CreateBlogResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 data = 3; // 博客ID
+}
+
+// 获取博客评论请求
+message ListBlogCommentsRequest {
+  int64 blogId = 1;
+  int32 current = 2;
+  int32 size = 3;
+}
+
+// 获取博客评论响应
+message ListBlogCommentsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated Comment data = 3;
+  int32 total = 4;
+}
+
+// 评论信息
+message Comment {
+  int64 id = 1;
+  int64 blogId = 2;
+  int64 userId = 3;
+  string content = 4;
+  int64 createTime = 5;
+  UserInfo user = 6;
+}
+
+// 发表评论请求
+message CreateCommentRequest {
+  int64 blogId = 1;
+  int64 userId = 2;
+  string content = 3;
+}
+
+// 发表评论响应
+message CreateCommentResponse {
+  int32 code = 1;
+  string message = 2;
+  int64 data = 3; // 评论ID
+}
+
+// 关注用户请求
+message FollowUserRequest {
+  int64 userId = 1;
+  int64 followUserId = 2;
+  bool isFollow = 3;
+}
+
+// 关注用户响应
+message FollowUserResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 取消关注请求
+message UnfollowUserRequest {
+  int64 userId = 1;
+  int64 followUserId = 2;
+}
+
+// 取消关注响应
+message UnfollowUserResponse {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 获取粉丝列表请求
+message ListFollowersRequest {
+  int64 userId = 1;
+  int32 current = 2;
+  int32 size = 3;
+}
+
+// 获取粉丝列表响应
+message ListFollowersResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated UserInfo data = 3;
+  int32 total = 4;
+}
+
+// 获取关注列表请求
+message ListFollowingsRequest {
+  int64 userId = 1;
+  int32 current = 2;
+  int32 size = 3;
+}
+
+// 获取关注列表响应
+message ListFollowingsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated UserInfo data = 3;
+  int32 total = 4;
+}
+
+// 获取共同关注请求
+message ListCommonFollowsRequest {
+  int64 userId = 1;
+  int64 targetUserId = 2;
+}
+
+// 获取共同关注响应
+message ListCommonFollowsResponse {
+  int32 code = 1;
+  string message = 2;
+  repeated UserInfo data = 3;
+}
+
+// 检查是否关注请求
+message CheckFollowRequest {
+  int64 userId = 1;
+  int64 targetUserId = 2;
+}
+
+// 检查是否关注响应
+message CheckFollowResponse {
+  int32 code = 1;
+  string message = 2;
+  bool data = 3;
+}
