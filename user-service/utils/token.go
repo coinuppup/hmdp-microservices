@@ -37,7 +37,7 @@ type RefreshTokenInfo struct {
 	ExpireAt      time.Time `json:"expireAt"`
 }
 
-// 常量定义
+// 常量定义，这个最后在项目中一定要在配置文件中配置
 const (
 	// TokenSecret JWT签名密钥
 	TokenSecret = "your-secret-key"

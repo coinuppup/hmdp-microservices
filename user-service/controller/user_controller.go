@@ -50,7 +50,35 @@ func (c *UserController) Login(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, model.Ok(result))
+	// 将result断言为map[string]interface{}
+	resultMap, ok := result.(map[string]interface{})
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, model.Fail("登录失败"))
+		return
+	}
+
+	// 获取Refresh Token
+	refreshToken, ok := resultMap["refreshToken"].(string)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, model.Fail("登录失败"))
+		return
+	}
+
+	// 设置Refresh Token到HttpOnly Cookie
+	ctx.SetCookie(
+		"refreshToken",
+		refreshToken,
+		int(7*24*60*60), // 7天过期
+		"/",
+		"",
+		false,
+		true, // HttpOnly
+	)
+
+	// 从响应中移除Refresh Token，只返回Access Token
+	resultMap["refreshToken"] = ""
+
+	ctx.JSON(http.StatusOK, model.Ok(resultMap))
 }
 
 // ValidateToken 验证Token并自动续期
@@ -79,16 +107,11 @@ func (c *UserController) ValidateToken(ctx *gin.Context) {
 }
 
 // RefreshToken 使用Refresh Token刷新Token
+// 从HttpOnly Cookie中获取Refresh Token，提高安全性
 func (c *UserController) RefreshToken(ctx *gin.Context) {
-	var req struct {
-		RefreshToken string `json:"refreshToken"`
-	}
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		ctx.JSON(http.StatusBadRequest, model.Fail("参数错误"))
-		return
-	}
-
-	if req.RefreshToken == "" {
+	// 从Cookie中获取Refresh Token
+	refreshToken, err := ctx.Cookie("refreshToken")
+	if err != nil || refreshToken == "" {
 		ctx.JSON(http.StatusBadRequest, model.Fail("refreshToken不能为空"))
 		return
 	}
@@ -96,11 +119,32 @@ func (c *UserController) RefreshToken(ctx *gin.Context) {
 	// 获取设备ID
 	deviceID := ctx.GetHeader("X-Device-ID")
 
-	result, err := c.userService.RefreshToken(ctx, req.RefreshToken, deviceID)
+	result, err := c.userService.RefreshToken(ctx, refreshToken, deviceID)
 	if err != nil {
 		ctx.JSON(http.StatusUnauthorized, model.Fail(err.Error()))
 		return
 	}
+
+	// 获取Refresh Token
+	refreshToken, ok := result["refreshToken"].(string)
+	if !ok {
+		ctx.JSON(http.StatusInternalServerError, model.Fail("刷新Token失败"))
+		return
+	}
+
+	// 设置新的Refresh Token到HttpOnly Cookie
+	ctx.SetCookie(
+		"refreshToken",
+		refreshToken,
+		int(7*24*60*60), // 7天过期
+		"/",
+		"",
+		false,
+		true, // HttpOnly
+	)
+
+	// 从响应中移除Refresh Token，只返回Access Token
+	result["refreshToken"] = ""
 
 	ctx.JSON(http.StatusOK, model.Ok(result))
 }
