@@ -15,21 +15,30 @@ const (
 	// 用户签到
 	UserSignKey = "user:sign:"
 
-	// ========== 双Token机制 ==========
-	// Access Token 存储前缀
-	AccessTokenKey = "token:access:"
-	// Access Token 有效期: 15分钟
-	AccessTokenTTL = 15 * time.Minute
+	// ========== 双Token机制 (新方案) ==========
+	// Access Token: 纯JWT，不存Redis
 
-	// Refresh Token 存储前缀
+	// Refresh Token 存储前缀 (白名单)
 	RefreshTokenKey = "token:refresh:"
 	// Refresh Token 有效期: 7天
 	RefreshTokenTTL = 7 * 24 * time.Hour
 
-	// 用户Token列表前缀 (用于多端管理和强制登出)
-	UserTokensKey = "user:tokens:"
-	// 已吊销的Refresh Token前缀
+	// Refresh Token 白名单前缀 (按用户ID:设备ID 分组)
+	// Key: token:whitelist:<userID>:<deviceID>
+	// Hash 结构，field 为 refreshTokenID，value 为过期时间
+	RefreshWhitelistKey = "token:whitelist:"
+
+	// 用户设备列表前缀 (用于多设备管理)
+	UserDevicesKey = "user:devices:"
+
+	// Access Token 有效期: 15分钟
+	AccessTokenTTL = 15 * time.Minute
+
+	// 已吊销的Refresh Token前缀 (旧版本兼容，用于防重放)
 	RevokedRefreshTokenKey = "token:revoked:"
+
+	// 用户Token列表前缀 (旧版本兼容)
+	UserTokensKey = "user:tokens:"
 )
 
 // Token 常量

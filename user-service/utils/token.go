@@ -30,14 +30,13 @@ type AccessTokenInfo struct {
 
 // RefreshTokenInfo Refresh Token信息
 type RefreshTokenInfo struct {
-	UserID        int64     `json:"userId"`
-	TokenID       string    `json:"tokenId"`
-	AccessTokenID string    `json:"accessTokenId"` // 关联的Access Token ID
-	CreatedAt     time.Time `json:"createdAt"`
-	ExpireAt      time.Time `json:"expireAt"`
+	UserID   int64     `json:"userId"`
+	TokenID  string    `json:"tokenId"`
+	DeviceID string    `json:"deviceId"` // 设备ID，用于多设备区分
+	ExpireAt time.Time `json:"expireAt"`
 }
 
-// 常量定义，这个最后在项目中一定要在配置文件中配置
+// 常量定义
 const (
 	// TokenSecret JWT签名密钥
 	TokenSecret = "your-secret-key"
@@ -62,32 +61,42 @@ func NewTokenService(rdb *redis.Client) *TokenService {
 }
 
 // GenerateTokenPair 生成双Token
+// - Access Token: 纯JWT，前端存储，不存Redis
+// - Refresh Token: 存Redis白名单，支持多设备区分
 func (s *TokenService) GenerateTokenPair(ctx context.Context, userID int64, deviceID string) (*TokenPair, error) {
-	// 1. 生成Access Token (使用JWT)
+	// 1. 生成Access Token ID
 	accessTokenID := generateRandomToken(AccessTokenLength)
+
+	// 2. 生成Access Token (纯JWT，不存Redis)
 	accessToken, err := s.generateJWT(userID, deviceID, accessTokenID, AccessTokenTTL)
 	if err != nil {
 		return nil, fmt.Errorf("生成access token失败: %w", err)
 	}
 
-	// 2. 生成Refresh Token (使用随机字符串)
+	// 3. 生成Refresh Token ID
 	refreshTokenID := generateRandomToken(RefreshTokenLength)
 
-	// 3. 使用Pipeline批量写入Redis
+	// 4. 使用Pipeline批量写入Redis
 	pipe := s.rdb.Pipeline()
 
-	// Refresh Token 存储 (String结构，值为userID)
+	// Refresh Token 白名单存储 (Hash结构，支持多设备区分)
+	// Key: token:whitelist:<userID>:<deviceID>
+	// Field: refreshTokenID
+	// Value: 过期时间
+	whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, deviceID)
+	pipe.HSet(ctx, whitelistKey, refreshTokenID, time.Now().Add(RefreshTokenTTL).Format(time.RFC3339))
+	pipe.Expire(ctx, whitelistKey, RefreshTokenTTL)
+
+	// 同时使用简单的String结构存储，便于验证
+	// Key: token:refresh:<refreshTokenID>
+	// Value: userID:deviceID
 	refreshKey := RefreshTokenKey + refreshTokenID
-	pipe.Set(ctx, refreshKey, userID, RefreshTokenTTL)
+	pipe.Set(ctx, refreshKey, fmt.Sprintf("%d:%s", userID, deviceID), RefreshTokenTTL)
 
-	// Access Token 与 Refresh Token 关联 (用于吊销时清理)
-	mappingKey := RefreshTokenKey + "mapping:" + accessTokenID
-	pipe.Set(ctx, mappingKey, refreshTokenID, RefreshTokenTTL)
-
-	// 用户的Token列表 (Set结构，记录该用户所有有效的Access Token)
-	userTokensKey := UserTokensKey + fmt.Sprintf("%d", userID)
-	pipe.SAdd(ctx, userTokensKey, accessTokenID)
-	pipe.Expire(ctx, userTokensKey, RefreshTokenTTL)
+	// 用户的设备列表 (Set结构，记录该用户所有登录的设备)
+	userDevicesKey := UserDevicesKey + fmt.Sprintf("%d", userID)
+	pipe.SAdd(ctx, userDevicesKey, deviceID)
+	pipe.Expire(ctx, userDevicesKey, RefreshTokenTTL)
 
 	// 执行Pipeline
 	_, err = pipe.Exec(ctx)
@@ -127,13 +136,13 @@ func (s *TokenService) generateJWT(userID int64, deviceID string, tokenID string
 	return tokenString, nil
 }
 
-// ValidateAccessToken 验证Access Token
+// ValidateAccessToken 验证Access Token (纯JWT验证，不查Redis白名单/黑名单)
 func (s *TokenService) ValidateAccessToken(ctx context.Context, tokenString string) (*AccessTokenInfo, error) {
 	if tokenString == "" {
 		return nil, fmt.Errorf("token不能为空")
 	}
 
-	// 1. 解析JWT Token
+	// 1. 解析JWT Token (纯JWT验证，不依赖Redis)
 	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// 验证签名方法
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -157,23 +166,6 @@ func (s *TokenService) ValidateAccessToken(ctx context.Context, tokenString stri
 		return nil, fmt.Errorf("token claims无效")
 	}
 
-	// 4. 检查Token是否已被吊销
-	// 注意：由于使用JWT，我们需要通过Redis检查token是否被吊销
-	// 这里通过tokenID来检查
-	accessTokenID := claims.TokenID
-	userID := claims.UserID
-
-	// 检查用户Token列表中是否存在该token
-	userTokensKey := UserTokensKey + fmt.Sprintf("%d", userID)
-	exists, err := s.rdb.SIsMember(ctx, userTokensKey, accessTokenID).Result()
-	if err != nil {
-		return nil, fmt.Errorf("检查token状态失败: %w", err)
-	}
-
-	if !exists {
-		return nil, fmt.Errorf("token已被吊销")
-	}
-
 	return &AccessTokenInfo{
 		UserID:    claims.UserID,
 		TokenID:   claims.TokenID,
@@ -184,14 +176,15 @@ func (s *TokenService) ValidateAccessToken(ctx context.Context, tokenString stri
 }
 
 // RefreshToken 使用Refresh Token刷新Access Token
+// 使用白名单验证，支持多设备
 func (s *TokenService) RefreshToken(ctx context.Context, refreshTokenID string, deviceID string) (*TokenPair, error) {
 	if refreshTokenID == "" {
 		return nil, fmt.Errorf("refresh token不能为空")
 	}
 
-	// 1. 验证Refresh Token是否存在
+	// 1. 验证Refresh Token是否存在 (查白名单)
 	refreshKey := RefreshTokenKey + refreshTokenID
-	userIDStr, err := s.rdb.Get(ctx, refreshKey).Result()
+	value, err := s.rdb.Get(ctx, refreshKey).Result()
 	if err == redis.Nil {
 		return nil, fmt.Errorf("refresh token已过期或无效")
 	}
@@ -199,56 +192,33 @@ func (s *TokenService) RefreshToken(ctx context.Context, refreshTokenID string, 
 		return nil, fmt.Errorf("查询refresh token失败: %w", err)
 	}
 
-	// 2. 检查Refresh Token是否已被吊销
-	revokedKey := RevokedRefreshTokenKey + refreshTokenID
-	exists, _ := s.rdb.Exists(ctx, revokedKey).Result()
-	if exists > 0 {
-		return nil, fmt.Errorf("refresh token已被吊销")
-	}
-
-	userID := ParseInt64(userIDStr)
+	// 2. 解析存储的 userID:deviceID
+	var userID int64
+	var originalDeviceID string
+	fmt.Sscanf(value, "%d:%s", &userID, &originalDeviceID)
 	if userID == 0 {
 		return nil, fmt.Errorf("token数据无效")
 	}
 
-	// 3. 获取关联的旧Access Token ID
-	// 使用SCAN查找关联
-	var oldAccessTokenID string
-	iter := s.rdb.Scan(ctx, 0, RefreshTokenKey+"mapping:*", 1000).Iterator()
-	for iter.Next(ctx) {
-		key := iter.Val()
-		val, _ := s.rdb.Get(ctx, key).Result()
-		if val == refreshTokenID {
-			// 提取access token ID
-			oldAccessTokenID = key[len(RefreshTokenKey+"mapping:"):]
-			break
-		}
-	}
-
-	// 4. 吊销旧的Refresh Token (一次性使用，防止重放攻击)
-	s.rdb.Set(ctx, revokedKey, "1", RefreshTokenTTL)
+	// 3. 吊销旧的Refresh Token (从白名单中删除)
 	s.rdb.Del(ctx, refreshKey)
 
-	// 5. 删除旧的Access Token
-	if oldAccessTokenID != "" {
-		s.rdb.Del(ctx, RefreshTokenKey+"mapping:"+oldAccessTokenID)
+	// 从用户设备白名单中移除
+	whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, originalDeviceID)
+	s.rdb.HDel(ctx, whitelistKey, refreshTokenID)
 
-		// 从用户Token列表中移除
-		userTokensKey := UserTokensKey + fmt.Sprintf("%d", userID)
-		s.rdb.SRem(ctx, userTokensKey, oldAccessTokenID)
-	}
-
-	// 6. 生成新的双Token
+	// 4. 生成新的双Token (使用新的deviceID)
 	return s.GenerateTokenPair(ctx, userID, deviceID)
 }
 
 // RevokeToken 吊销Token (用户登出)
+// 只吊销Refresh Token，Access Token 会在 JWT 过期后自然失效
 func (s *TokenService) RevokeToken(ctx context.Context, accessTokenString string) error {
 	if accessTokenString == "" {
 		return fmt.Errorf("token不能为空")
 	}
 
-	// 1. 解析JWT Token获取tokenID和userID
+	// 1. 解析JWT Token获取deviceID
 	token, err := jwt.ParseWithClaims(accessTokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -265,87 +235,107 @@ func (s *TokenService) RevokeToken(ctx context.Context, accessTokenString string
 		return fmt.Errorf("token无效")
 	}
 
-	accessTokenID := claims.TokenID
 	userID := claims.UserID
+	deviceID := claims.DeviceID
 
-	// 2. 查找关联的Refresh Token
-	mappingKey := RefreshTokenKey + "mapping:" + accessTokenID
-	refreshTokenID, _ := s.rdb.Get(ctx, mappingKey).Result()
-
-	pipe := s.rdb.Pipeline()
-
-	// 3. 吊销Refresh Token
-	if refreshTokenID != "" {
-		pipe.Set(ctx, RevokedRefreshTokenKey+refreshTokenID, "1", RefreshTokenTTL)
-		pipe.Del(ctx, RefreshTokenKey+refreshTokenID)
-		pipe.Del(ctx, mappingKey)
+	// 2. 获取该设备对应的Refresh Token
+	// 从白名单中获取该用户的设备列表，找到对应的refreshTokenID
+	whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, deviceID)
+	refreshTokenIDs, err := s.rdb.HKeys(ctx, whitelistKey).Result()
+	if err != nil || len(refreshTokenIDs) == 0 {
+		// 如果白名单中没有，可能是旧的token格式，尝试使用SCAN查找
+		return s.revokeTokenByScan(ctx, userID, deviceID)
 	}
 
-	// 4. 从用户Token列表中移除
-	userTokensKey := UserTokensKey + fmt.Sprintf("%d", userID)
-	pipe.SRem(ctx, userTokensKey, accessTokenID)
-
+	// 吊销该设备的所有Refresh Token
+	pipe := s.rdb.Pipeline()
+	for _, rtID := range refreshTokenIDs {
+		pipe.Del(ctx, RefreshTokenKey+rtID)
+	}
+	pipe.Del(ctx, whitelistKey)
 	_, err = pipe.Exec(ctx)
+
 	return err
 }
 
-// RevokeAllUserTokens 吊销用户的所有Token (强制登出所有设备)
-func (s *TokenService) RevokeAllUserTokens(ctx context.Context, userID int64) error {
-	userTokensKey := UserTokensKey + fmt.Sprintf("%d", userID)
-
-	// 获取该用户所有有效的Access Token ID
-	tokenIDs, err := s.rdb.SMembers(ctx, userTokensKey).Result()
+// revokeTokenByScan 通过SCAN查找并吊销Token (兼容旧版本)
+func (s *TokenService) revokeTokenByScan(ctx context.Context, userID int64, deviceID string) error {
+	// 查找用户的所有设备
+	userDevicesKey := UserDevicesKey + fmt.Sprintf("%d", userID)
+	deviceIDs, err := s.rdb.SMembers(ctx, userDevicesKey).Result()
 	if err != nil {
 		return err
 	}
 
 	pipe := s.rdb.Pipeline()
-
-	for _, tokenID := range tokenIDs {
-		// 查找并吊销关联的Refresh Token
-		mappingKey := RefreshTokenKey + "mapping:" + tokenID
-		refreshTokenID, _ := s.rdb.Get(ctx, mappingKey).Result()
-		if refreshTokenID != "" {
-			pipe.Set(ctx, RevokedRefreshTokenKey+refreshTokenID, "1", RefreshTokenTTL)
-			pipe.Del(ctx, RefreshTokenKey+refreshTokenID)
-			pipe.Del(ctx, mappingKey)
+	for _, devID := range deviceIDs {
+		if devID == deviceID || deviceID == "" {
+			// 删除该设备的Refresh Token白名单
+			whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, devID)
+			pipe.Del(ctx, whitelistKey)
 		}
 	}
+	_, err = pipe.Exec(ctx)
+	return err
+}
 
-	// 删除用户Token列表
-	pipe.Del(ctx, userTokensKey)
+// RevokeDeviceToken 吊销指定设备的Token
+func (s *TokenService) RevokeDeviceToken(ctx context.Context, userID int64, deviceID string) error {
+	whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, deviceID)
+
+	// 获取该设备的所有Refresh Token
+	refreshTokenIDs, err := s.rdb.HKeys(ctx, whitelistKey).Result()
+	if err != nil {
+		return err
+	}
+
+	pipe := s.rdb.Pipeline()
+	for _, rtID := range refreshTokenIDs {
+		pipe.Del(ctx, RefreshTokenKey+rtID)
+	}
+	pipe.Del(ctx, whitelistKey)
+	_, err = pipe.Exec(ctx)
+
+	return err
+}
+
+// RevokeAllUserTokens 吊销用户的所有Token (强制登出所有设备)
+func (s *TokenService) RevokeAllUserTokens(ctx context.Context, userID int64) error {
+	// 获取用户的所有设备
+	userDevicesKey := UserDevicesKey + fmt.Sprintf("%d", userID)
+	deviceIDs, err := s.rdb.SMembers(ctx, userDevicesKey).Result()
+	if err != nil {
+		return err
+	}
+
+	pipe := s.rdb.Pipeline()
+	for _, deviceID := range deviceIDs {
+		whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, deviceID)
+		// 获取该设备的所有Refresh Token并删除
+		refreshTokenIDs, _ := s.rdb.HKeys(ctx, whitelistKey).Result()
+		for _, rtID := range refreshTokenIDs {
+			pipe.Del(ctx, RefreshTokenKey+rtID)
+		}
+		pipe.Del(ctx, whitelistKey)
+	}
+
+	// 删除用户设备列表
+	pipe.Del(ctx, userDevicesKey)
 
 	_, err = pipe.Exec(ctx)
 	return err
 }
 
-// GetUserTokens 获取用户的所有有效Token (用于查看登录设备)
-func (s *TokenService) GetUserTokens(ctx context.Context, userID int64) ([]AccessTokenInfo, error) {
-	userTokensKey := UserTokensKey + fmt.Sprintf("%d", userID)
+// GetUserDevices 获取用户的所有登录设备
+func (s *TokenService) GetUserDevices(ctx context.Context, userID int64) ([]string, error) {
+	userDevicesKey := UserDevicesKey + fmt.Sprintf("%d", userID)
+	return s.rdb.SMembers(ctx, userDevicesKey).Result()
+}
 
-	// 获取所有Token ID
-	tokenIDs, err := s.rdb.SMembers(ctx, userTokensKey).Result()
-	if err != nil {
-		return nil, err
-	}
-
-	// 注意：由于使用JWT，我们无法直接通过tokenID获取完整的token信息
-	// 这里返回的是基于tokenID的基本信息
-	// 实际使用中，前端需要提供完整的token才能验证
-	var tokens []AccessTokenInfo
-	for _, tokenID := range tokenIDs {
-		// 创建一个基本的AccessTokenInfo
-		tokenInfo := AccessTokenInfo{
-			UserID:    userID,
-			TokenID:   tokenID,
-			DeviceID:  "", // 由于使用JWT，我们无法直接获取设备ID
-			CreatedAt: time.Now(),
-			ExpireAt:  time.Now().Add(AccessTokenTTL),
-		}
-		tokens = append(tokens, tokenInfo)
-	}
-
-	return tokens, nil
+// GetDeviceTokenCount 获取指定设备的Token数量
+func (s *TokenService) GetDeviceTokenCount(ctx context.Context, userID int64, deviceID string) (int64, error) {
+	whitelistKey := RefreshWhitelistKey + fmt.Sprintf("%d:%s", userID, deviceID)
+	return s.rdb.HLen(ctx, whitelistKey).Result()
 }
 
 // generateRandomToken 生成随机Token字符串
@@ -356,17 +346,4 @@ func generateRandomToken(length int) string {
 		return fmt.Sprintf("%d%d", time.Now().UnixNano(), time.Now().Unix())[:length]
 	}
 	return hex.EncodeToString(bytes)
-}
-
-// ParseInt64 字符串转int64
-func ParseInt64(s string) int64 {
-	var n int64
-	fmt.Sscanf(s, "%d", &n)
-	return n
-}
-
-// parseTime 解析时间字符串
-func parseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
 }
