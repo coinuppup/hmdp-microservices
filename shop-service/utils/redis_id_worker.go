@@ -37,9 +37,9 @@ func NewRedisIDWorker(rdb *redis.Client, serverID int64) *RedisIDWorker {
 	}
 }
 
-// NextId 生成下一个 ID
+// ID结构：41位时间戳 + 10位机器ID + 12位序列号 = 63位
 func (w *RedisIDWorker) NextId(ctx context.Context, key string) (int64, error) {
-	// 获取当前时间戳
+	// 获取当前时间戳毫秒级别
 	now := time.Now().UnixMilli()
 
 	// 生成序列号

@@ -110,17 +110,17 @@ func startKafkaConsumer(brokers []string, topic string, db *gorm.DB) {
 
 // SeckillVoucher 秒杀优惠券
 func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, userID int64) (int64, error) {
-	// 生成订单ID
+	// 生成订单ID，63位=41位+10位机器ID+12位序列号
 	orderId, err := s.idWorker.NextId(ctx, "order")
 	if err != nil {
 		return 0, err
 	}
 
-	// 执行秒杀逻辑
+	// 执行秒杀逻辑，构建Redis键值
 	stockKey := utils.SeckillVoucherStockKey + strconv.FormatInt(voucherID, 10)
 	orderKey := utils.SeckillVoucherOrderKey + strconv.FormatInt(voucherID, 10)
 
-	// 检查是否已经下单
+	// 一人一旦检查，检查是否重复下单，使用redis Set集合
 	exists, err := s.rdb.SIsMember(ctx, orderKey, userID).Result()
 	if err != nil {
 		return 0, err
@@ -129,7 +129,7 @@ func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, use
 		return 0, fmt.Errorf("禁止重复下单")
 	}
 
-	// 扣减库存
+	// 扣减库存——原子操作使用redis Decr命令
 	stock, err := s.rdb.Decr(ctx, stockKey).Result()
 	if err != nil {
 		return 0, err
@@ -151,7 +151,7 @@ func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, use
 		Status:    1,
 	}
 
-	// 发送消息到Kafka
+	// 发送消息到Kafka，创建订单
 	orderData, err := json.Marshal(order)
 	if err != nil {
 		return 0, err
