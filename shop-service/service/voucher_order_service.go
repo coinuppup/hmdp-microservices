@@ -109,6 +109,13 @@ func startKafkaConsumer(brokers []string, topic string, db *gorm.DB) {
 }
 
 // SeckillVoucher 秒杀优惠券
+// 1. **Redis扣减**：用户发起秒杀请求时，先通过`Decr`命令扣减Redis中的库存
+// 2. **库存检查**：检查扣减后的库存是否为负数，如果为负数则恢复库存并返回错误
+// 3. **异步处理**：将订单信息发送到Kafka消息队列
+// 4. **数据库扣减**：Kafka消费者使用乐观锁在数据库中扣减库存
+// 5. **订单创建**：在数据库中创建订单记录
+// 6. **事务提交**：使用数据库事务保证库存扣减和订单创建的原子性
+// 7. **异常回滚**：任何步骤失败都执行回滚操作"
 func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, userID int64) (int64, error) {
 	// 生成订单ID，63位=41位+10位机器ID+12位序列号
 	orderId, err := s.idWorker.NextId(ctx, "order")
