@@ -9,7 +9,10 @@ require (
 	google.golang.org/grpc v1.66.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.31.1
+	hmdp-microservices/common/proto/user v0.0.0
 )
+
+replace hmdp-microservices/common/proto/user => ../common/proto/user
 
 require (
 	filippo.io/edwards25519 v1.1.0 // indirect

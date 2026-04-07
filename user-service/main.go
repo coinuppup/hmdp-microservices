@@ -6,10 +6,12 @@ import (
 
 	"hmdp-microservices/user-service/config"
 	"hmdp-microservices/user-service/controller"
+	grpcserver "hmdp-microservices/user-service/grpc"
 	"hmdp-microservices/user-service/service"
 	"hmdp-microservices/user-service/utils"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 )
 
@@ -27,20 +29,22 @@ func main() {
 	rdb := config.InitRedis(cfg)
 
 	// 初始化服务
-	userService := service.NewUserService(db, rdb)
+	userService := service.NewUserService(db, rdb, cfg.Token.Secret)
 
 	// 启动gRPC服务
 	go startGRPCServer(userService, cfg.GRPC.Port)
 
 	// 启动HTTP服务
-	startHTTPServer(userService, cfg.Server.Port)
+	startHTTPServer(userService, cfg.Server.Port, rdb, cfg)
 }
 
 // startGRPCServer 启动gRPC服务
 func startGRPCServer(userService *service.UserService, grpcPort string) {
 	// 注册gRPC服务
 	server := grpc.NewServer()
-	// TODO: 注册用户服务的gRPC实现
+
+	// 注册用户服务的gRPC实现
+	grpcserver.Register(server, userService)
 
 	// 启动服务
 	listener, err := net.Listen("tcp", ":"+grpcPort)
@@ -55,7 +59,7 @@ func startGRPCServer(userService *service.UserService, grpcPort string) {
 }
 
 // startHTTPServer 启动HTTP服务
-func startHTTPServer(userService *service.UserService, httpPort string) {
+func startHTTPServer(userService *service.UserService, httpPort string, rdb *redis.Client, cfg *config.Config) {
 	// 初始化Gin
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -63,13 +67,16 @@ func startHTTPServer(userService *service.UserService, httpPort string) {
 	// 创建控制器
 	userController := controller.NewUserController(userService)
 
+	// 创建认证中间件
+	authMiddleware := utils.AuthMiddleware(rdb, cfg.Token.Secret)
+
 	// 注册路由
 	r.POST("/user/code", userController.SendCode)
 	r.POST("/user/login", userController.Login)
-	r.GET("/user/me", userController.GetCurrentUser)
+	r.GET("/user/me", authMiddleware, userController.GetCurrentUser)
 	r.GET("/user/info/:id", userController.GetUserInfo)
-	r.POST("/user/sign", utils.AuthMiddleware(), userController.Sign)
-	r.GET("/user/sign/count", utils.AuthMiddleware(), userController.GetSignCount)
+	r.POST("/user/sign", authMiddleware, userController.Sign)
+	r.GET("/user/sign/count", authMiddleware, userController.GetSignCount)
 
 	// Token相关接口
 	r.POST("/user/validate", userController.ValidateToken)

@@ -11,12 +11,9 @@ import (
 )
 
 // AuthMiddleware 认证中间件（使用Redis双Token）
-func AuthMiddleware() gin.HandlerFunc {
+func AuthMiddleware(rdb *redis.Client, secret string) gin.HandlerFunc {
 	// 创建TokenService实例
-	tokenService := NewTokenService(redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-		DB:   0,
-	}))
+	tokenService := NewTokenService(rdb, secret)
 
 	return func(ctx *gin.Context) {
 		// 获取token

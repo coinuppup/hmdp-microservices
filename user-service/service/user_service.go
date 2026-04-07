@@ -24,12 +24,12 @@ type UserService struct {
 }
 
 // NewUserService 创建用户服务
-func NewUserService(db *gorm.DB, rdb *redis.Client) *UserService {
+func NewUserService(db *gorm.DB, rdb *redis.Client, secret string) *UserService {
 	return &UserService{
 		db:           db,
 		rdb:          rdb,
 		repo:         repository.NewUserRepository(db),
-		tokenService: utils.NewTokenService(rdb),
+		tokenService: utils.NewTokenService(rdb, secret),
 	}
 }
 

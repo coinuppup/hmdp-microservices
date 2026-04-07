@@ -36,12 +36,6 @@ type RefreshTokenInfo struct {
 	ExpireAt time.Time `json:"expireAt"`
 }
 
-// 常量定义
-const (
-	// TokenSecret JWT签名密钥
-	TokenSecret = "your-secret-key"
-)
-
 // JWTClaims JWT声明结构
 type JWTClaims struct {
 	UserID   int64  `json:"userId"`
@@ -52,12 +46,13 @@ type JWTClaims struct {
 
 // TokenService Token服务
 type TokenService struct {
-	rdb *redis.Client
+	rdb    *redis.Client
+	secret string
 }
 
 // NewTokenService 创建Token服务
-func NewTokenService(rdb *redis.Client) *TokenService {
-	return &TokenService{rdb: rdb}
+func NewTokenService(rdb *redis.Client, secret string) *TokenService {
+	return &TokenService{rdb: rdb, secret: secret}
 }
 
 // GenerateTokenPair 生成双Token
@@ -128,7 +123,7 @@ func (s *TokenService) generateJWT(userID int64, deviceID string, tokenID string
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenString, err := token.SignedString([]byte(TokenSecret))
+	tokenString, err := token.SignedString([]byte(s.secret))
 	if err != nil {
 		return "", err
 	}
@@ -148,7 +143,7 @@ func (s *TokenService) ValidateAccessToken(ctx context.Context, tokenString stri
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(TokenSecret), nil
+		return []byte(s.secret), nil
 	})
 
 	if err != nil {
@@ -223,7 +218,7 @@ func (s *TokenService) RevokeToken(ctx context.Context, accessTokenString string
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
-		return []byte(TokenSecret), nil
+		return []byte(s.secret), nil
 	})
 
 	if err != nil {

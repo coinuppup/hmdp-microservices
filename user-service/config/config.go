@@ -13,6 +13,14 @@ type Config struct {
 	MySQL  MySQLConfig  `mapstructure:"mysql"`
 	Redis  RedisConfig  `mapstructure:"redis"`
 	GRPC   GRPCConfig   `mapstructure:"grpc"`
+	Token  TokenConfig  `mapstructure:"token"`
+}
+
+// TokenConfig Token配置
+type TokenConfig struct {
+	Secret          string `mapstructure:"secret"`
+	AccessTokenTTL  int    `mapstructure:"access_token_ttl"`
+	RefreshTokenTTL int    `mapstructure:"refresh_token_ttl"`
 }
 
 // ServerConfig 服务器配置
@@ -85,6 +93,11 @@ func getDefaultConfig() *Config {
 		},
 		GRPC: GRPCConfig{
 			Port: "50051",
+		},
+		Token: TokenConfig{
+			Secret:          "your-secret-key",
+			AccessTokenTTL:  3600,
+			RefreshTokenTTL: 86400,
 		},
 	}
 }

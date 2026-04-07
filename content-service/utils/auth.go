@@ -2,17 +2,28 @@ package utils
 
 import (
 	"context"
-	"encoding/json"
-	"net/http"
 	"strings"
+	"sync"
 
+	"hmdp-microservices/content-service/grpc"
 	"hmdp-microservices/content-service/model"
 
 	"github.com/gin-gonic/gin"
 )
 
-// UserServiceURL user-service 的地址
-const UserServiceURL = "http://localhost:8081"
+var (
+	userGrpcClient *grpc.UserGrpcClient
+	once           sync.Once
+)
+
+// getUserGrpcClient 获取gRPC客户端(单例)
+func getUserGrpcClient() (*grpc.UserGrpcClient, error) {
+	var err error
+	once.Do(func() {
+		userGrpcClient, err = grpc.NewUserGrpcClient()
+	})
+	return userGrpcClient, err
+}
 
 // AuthMiddleware 认证中间件
 func AuthMiddleware() gin.HandlerFunc {
@@ -33,7 +44,7 @@ func AuthMiddleware() gin.HandlerFunc {
 
 		token := parts[1]
 
-		// 调用 user-service 验证 token
+		// 调用 user-service 验证 token (使用gRPC)
 		user, err := validateToken(ctx.Request.Context(), token)
 		if err != nil {
 			// token 无效或过期，继续但不设置用户
@@ -47,44 +58,31 @@ func AuthMiddleware() gin.HandlerFunc {
 	}
 }
 
-// validateToken 调用 user-service 验证 token
+// validateToken 调用 user-service 验证 token (使用gRPC)
 func validateToken(ctx context.Context, token string) (*model.UserDTO, error) {
-	// 构建请求
-	req, err := http.NewRequestWithContext(ctx, "POST", UserServiceURL+"/user/validate", nil)
+	// 获取gRPC客户端
+	client, err := getUserGrpcClient()
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
 
-	// 发送请求
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// 调用gRPC
+	userInfo, err := client.ValidateToken(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
 
-	// 检查响应状态
-	if resp.StatusCode != http.StatusOK {
-		return nil, err
+	if userInfo == nil {
+		return nil, nil
 	}
 
-	// 解析响应
-	var result struct {
-		Code    int            `json:"code"`
-		Message string         `json:"message"`
-		Data    *model.UserDTO `json:"data"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, err
-	}
-
-	if result.Code != 200 {
-		return nil, err
-	}
-
-	return result.Data, nil
+	// 转换为UserDTO
+	return &model.UserDTO{
+		ID:       userInfo.Id,
+		Phone:    userInfo.Phone,
+		NickName: userInfo.NickName,
+		Icon:     userInfo.Icon,
+	}, nil
 }
 
 // GetUserID 从上下文获取用户ID
