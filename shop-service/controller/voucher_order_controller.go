@@ -29,6 +29,7 @@ func (c *VoucherOrderController) SeckillVoucher(ctx *gin.Context) {
 	}
 
 	// 从上下文获取用户ID（实际项目中应该从认证中间件获取）
+	// TODO 从认证中间件获取用户ID
 	userID := int64(1) // 模拟用户ID
 
 	orderID, err := c.voucherOrderService.SeckillVoucher(ctx, voucherID, userID)
