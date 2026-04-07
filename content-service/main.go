@@ -3,7 +3,11 @@ package main
 import (
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"hmdp-microservices/common/etcd"
 	"hmdp-microservices/content-service/config"
 	"hmdp-microservices/content-service/controller"
 	"hmdp-microservices/content-service/repository"
@@ -31,6 +35,31 @@ func main() {
 	followService := service.NewFollowService(blogRepo, rdb)
 
 	go startGRPCServer(blogService, followService, cfg.GRPC.Port)
+
+	// 注册服务到etcd
+	serviceAddr := "127.0.0.1:" + cfg.GRPC.Port
+	etcdEndpoints := []string{"localhost:2379"}
+	serviceRegister, err := etcd.NewServiceRegister(etcdEndpoints, "content-service", serviceAddr, 10)
+	if err != nil {
+		log.Fatalf("Failed to create service register: %v", err)
+	}
+
+	if err := serviceRegister.Register(); err != nil {
+		log.Fatalf("Failed to register service: %v", err)
+	}
+
+	// 处理优雅关闭
+	go func() {
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGINT, syscall.SIGTERM)
+		<-c
+
+		log.Println("Shutting down service...")
+		if err := serviceRegister.Unregister(); err != nil {
+			log.Printf("Failed to unregister service: %v", err)
+		}
+		os.Exit(0)
+	}()
 
 	startHTTPServer(blogService, followService)
 }
