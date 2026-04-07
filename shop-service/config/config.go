@@ -27,7 +27,7 @@ type EtcdConfig struct {
 type EtcdServiceConfig struct {
 	Host string `mapstructure:"host"`
 	Name string `mapstructure:"name"`
-	TTL  int    `mapstructure:"ttl"`
+	TTL  int64  `mapstructure:"ttl"`
 }
 
 // ServerConfig 服务器配置
