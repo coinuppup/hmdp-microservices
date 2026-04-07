@@ -21,3 +21,11 @@ kafka:
   brokers:
     - "localhost:9092"
   topic: "order-create"
+
+etcd:
+  endpoints:
+    - "localhost:2379"
+  service:
+    host: "127.0.0.1"
+    name: "shop-service"
+    ttl: 10

@@ -14,6 +14,20 @@ type Config struct {
 	Redis  RedisConfig  `mapstructure:"redis"`
 	GRPC   GRPCConfig   `mapstructure:"grpc"`
 	Kafka  KafkaConfig  `mapstructure:"kafka"`
+	Etcd   EtcdConfig   `mapstructure:"etcd"`
+}
+
+// EtcdConfig Etcd配置
+type EtcdConfig struct {
+	Endpoints []string          `mapstructure:"endpoints"`
+	Service   EtcdServiceConfig `mapstructure:"service"`
+}
+
+// EtcdServiceConfig Etcd服务配置
+type EtcdServiceConfig struct {
+	Host string `mapstructure:"host"`
+	Name string `mapstructure:"name"`
+	TTL  int    `mapstructure:"ttl"`
 }
 
 // ServerConfig 服务器配置
@@ -96,6 +110,14 @@ func getDefaultConfig() *Config {
 		Kafka: KafkaConfig{
 			Brokers: []string{"localhost:9092"},
 			Topic:   "order-create",
+		},
+		Etcd: EtcdConfig{
+			Endpoints: []string{"localhost:2379"},
+			Service: EtcdServiceConfig{
+				Host: "127.0.0.1",
+				Name: "shop-service",
+				TTL:  10,
+			},
 		},
 	}
 }
