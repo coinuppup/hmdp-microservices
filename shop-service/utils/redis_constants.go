@@ -3,16 +3,16 @@ package utils
 // Redis 常量
 const (
 	// 商铺缓存
-	CacheShopKey  = "cache:shop:"
-	CacheShopTTL  = 30 // 30分钟
+	CacheShopKey = "cache:shop:"
+	CacheShopTTL = 30 // 30分钟
 
 	// 空值缓存
-	CacheNullKey  = "cache:null:"
-	CacheNullTTL  = 5 // 5分钟
+	CacheNullKey = "cache:null:"
+	CacheNullTTL = 5 // 5分钟
 
 	// 锁
-	LockShopKey   = "lock:shop:"
-	LockShopTTL   = 10 // 10秒
+	LockShopKey = "lock:shop:"
+	LockShopTTL = 30 // 30秒（生产环境推荐）
 
 	// 商铺类型缓存
 	CacheShopTypeKey = "cache:shop:type"

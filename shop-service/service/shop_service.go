@@ -38,8 +38,8 @@ func (s *ShopService) GetShop(ctx context.Context, id int64) (*model.Shop, error
 	key := utils.CacheShopKey + strconv.FormatInt(id, 10)
 	var shop model.Shop
 
-	// 使用缓存穿透处理
-	err := s.cacheClient.QueryWithPassThrough(ctx, key, &shop, time.Duration(utils.CacheShopTTL)*time.Minute, func() (interface{}, error) {
+	// 使用安全版互斥锁处理缓存击穿（生产环境推荐）
+	err := s.cacheClient.SafeMutex(ctx, key, &shop, time.Duration(utils.CacheShopTTL)*time.Minute, func() (interface{}, error) {
 		// 查询数据库
 		dbShop, err := s.shopRepo.FindByID(id)
 		if err != nil {
@@ -70,8 +70,8 @@ func (s *ShopService) ListShopTypes(ctx context.Context) ([]*model.ShopType, err
 	key := utils.CacheShopTypeKey
 	var shopTypes []*model.ShopType
 
-	// 使用缓存穿透处理
-	err := s.cacheClient.QueryWithPassThrough(ctx, key, &shopTypes, time.Duration(utils.CacheShopTypeTTL)*time.Minute, func() (interface{}, error) {
+	// 使用安全版互斥锁处理缓存击穿（生产环境推荐）
+	err := s.cacheClient.SafeMutex(ctx, key, &shopTypes, time.Duration(utils.CacheShopTypeTTL)*time.Minute, func() (interface{}, error) {
 		// 查询数据库
 		dbShopTypes, err := s.shopRepo.FindShopTypes()
 		if err != nil {

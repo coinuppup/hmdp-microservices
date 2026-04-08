@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	github.com/gin-gonic/gin v1.12.0
+	github.com/google/uuid v1.6.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/segmentio/kafka-go v0.4.50
 	github.com/spf13/viper v1.18.2

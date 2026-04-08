@@ -109,13 +109,12 @@ func startKafkaConsumer(brokers []string, topic string, db *gorm.DB) {
 }
 
 // SeckillVoucher 秒杀优惠券
-// 1. **Redis扣减**：用户发起秒杀请求时，先通过`Decr`命令扣减Redis中的库存
-// 2. **库存检查**：检查扣减后的库存是否为负数，如果为负数则恢复库存并返回错误
+// 1. **一人一单检查**：使用Lua脚本保证原子性
+// 2. **库存扣减**：使用Lua脚本保证原子性
 // 3. **异步处理**：将订单信息发送到Kafka消息队列
 // 4. **数据库扣减**：Kafka消费者使用乐观锁在数据库中扣减库存
 // 5. **订单创建**：在数据库中创建订单记录
 // 6. **事务提交**：使用数据库事务保证库存扣减和订单创建的原子性
-// 7. **异常回滚**：任何步骤失败都执行回滚操作"
 func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, userID int64) (int64, error) {
 	// 生成订单ID，63位=41位+10位机器ID+12位序列号
 	orderId, err := s.idWorker.NextId(ctx, "order")
@@ -127,30 +126,50 @@ func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, use
 	stockKey := utils.SeckillVoucherStockKey + strconv.FormatInt(voucherID, 10)
 	orderKey := utils.SeckillVoucherOrderKey + strconv.FormatInt(voucherID, 10)
 
-	// 一人一旦检查，检查是否重复下单，使用redis Set集合
-	exists, err := s.rdb.SIsMember(ctx, orderKey, userID).Result()
+	// 一、使用Lua脚本原子执行：一人一单检查 + 添加下单集合
+	// 避免 SISMEMBER + SADD 非原子导致重复下单
+	onePersonOneOrderScript := redis.NewScript(`
+		if redis.call('sismember', KEYS[1], ARGV[1]) == 1 then
+			return -1
+		end
+		return redis.call('sadd', KEYS[1], ARGV[1])
+	`)
+	result, err := onePersonOneOrderScript.Run(ctx, s.rdb, []string{orderKey}, userID).Result()
 	if err != nil {
 		return 0, err
 	}
-	if exists {
+	if result.(int64) == -1 {
 		return 0, fmt.Errorf("禁止重复下单")
 	}
 
-	// 扣减库存——原子操作使用redis Decr命令
-	stock, err := s.rdb.Decr(ctx, stockKey).Result()
+	// 二、使用Lua脚本原子执行：库存扣减 + 检查
+	// 避免 DECR + 判断 非原子导致超卖
+	stockScript := redis.NewScript(`
+		local stock = redis.call('get', KEYS[1])
+		if stock == false then
+			return -1
+		end
+		if tonumber(stock) <= 0 then
+			return -2
+		end
+		return redis.call('decr', KEYS[1])
+	`)
+	stockResult, err := stockScript.Run(ctx, s.rdb, []string{stockKey}).Result()
 	if err != nil {
+		// 执行失败，回滚一人一单
+		s.rdb.SRem(ctx, orderKey, userID)
 		return 0, err
 	}
-	if stock < 0 {
-		// 库存不足，恢复库存
-		s.rdb.Incr(ctx, stockKey)
+	if stockResult.(int64) == -1 {
+		s.rdb.SRem(ctx, orderKey, userID)
+		return 0, fmt.Errorf("库存不存在")
+	}
+	if stockResult.(int64) == -2 {
+		s.rdb.SRem(ctx, orderKey, userID)
 		return 0, fmt.Errorf("库存不足")
 	}
 
-	// 添加到已下单集合
-	s.rdb.SAdd(ctx, orderKey, userID)
-
-	// 创建订单
+	// 三、创建订单
 	order := &model.VoucherOrder{
 		ID:        orderId,
 		UserID:    userID,
@@ -158,9 +177,12 @@ func (s *VoucherOrderService) SeckillVoucher(ctx context.Context, voucherID, use
 		Status:    1,
 	}
 
-	// 发送消息到Kafka，创建订单
+	// 四、发送消息到Kafka
 	orderData, err := json.Marshal(order)
 	if err != nil {
+		// 发送失败，恢复库存和订单状态
+		s.rdb.Incr(ctx, stockKey)
+		s.rdb.SRem(ctx, orderKey, userID)
 		return 0, err
 	}
 
