@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 
@@ -13,17 +14,158 @@ import (
 
 // CacheClient 缓存客户端
 type CacheClient struct {
-	rdb            *redis.Client
-	localLockValue map[string]string
-	localMu        sync.RWMutex
+	rdb                *redis.Client
+	localLockValue     map[string]string
+	localMu            sync.RWMutex
+	shopBloomFilter    *BloomFilter
+	voucherBloomFilter *BloomFilter
+	whitelistDeleted   map[string]map[int64]bool // 用于记录软删除的ID
+	whitelistMu        sync.RWMutex
 }
 
 // NewCacheClient 创建缓存客户端
 func NewCacheClient(rdb *redis.Client) *CacheClient {
 	return &CacheClient{
-		rdb:            rdb,
-		localLockValue: make(map[string]string),
+		rdb:                rdb,
+		localLockValue:     make(map[string]string),
+		shopBloomFilter:    NewBloomFilter(rdb, "bloom:shop", 100000, 0.01),
+		voucherBloomFilter: NewBloomFilter(rdb, "bloom:voucher", 100000, 0.01),
+		whitelistDeleted:   make(map[string]map[int64]bool),
 	}
+}
+
+// InitBloomFilterWithData 使用数据初始化布隆过滤器
+func (c *CacheClient) InitBloomFilterWithData(ctx context.Context, shopRepo interface{ FindAllIDs() ([]int64, error) }, voucherRepo interface{ FindAllIDs() ([]int64, error) }) error {
+	// 初始化商铺布隆过滤器
+	if shopRepo != nil {
+		ids, err := shopRepo.FindAllIDs()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if c.shopBloomFilter != nil {
+				_ = c.shopBloomFilter.AddInt64(ctx, id)
+			}
+		}
+	}
+
+	// 初始化优惠券布隆过滤器
+	if voucherRepo != nil {
+		ids, err := voucherRepo.FindAllIDs()
+		if err != nil {
+			return err
+		}
+		for _, id := range ids {
+			if c.voucherBloomFilter != nil {
+				_ = c.voucherBloomFilter.AddInt64(ctx, id)
+			}
+		}
+	}
+
+	return nil
+}
+
+// CheckShopExists 检查商铺是否存在（布隆过滤器 + 白名单）
+// 返回值：true=可能存在，false=一定不存在
+func (c *CacheClient) CheckShopExists(ctx context.Context, id int64) (bool, error) {
+	// 先检查白名单（软删除标记）
+	c.whitelistMu.RLock()
+	deleted, exists := c.whitelistDeleted["shop"][id]
+	c.whitelistMu.RUnlock()
+
+	if exists && deleted {
+		// 在白名单中标记为已删除
+		return false, nil
+	}
+
+	// 检查布隆过滤器
+	if c.shopBloomFilter != nil {
+		exists, err := c.shopBloomFilter.ExistsInt64(ctx, id)
+		if err != nil {
+			return true, nil // 错误时保守返回true
+		}
+		return exists, nil
+	}
+
+	// 过滤器未初始化，放行
+	return true, nil
+}
+
+// CheckVoucherExists 检查优惠券是否存在
+func (c *CacheClient) CheckVoucherExists(ctx context.Context, id int64) (bool, error) {
+	c.whitelistMu.RLock()
+	deleted, exists := c.whitelistDeleted["voucher"][id]
+	c.whitelistMu.RUnlock()
+
+	if exists && deleted {
+		return false, nil
+	}
+
+	if c.voucherBloomFilter != nil {
+		exists, err := c.voucherBloomFilter.ExistsInt64(ctx, id)
+		if err != nil {
+			return true, nil
+		}
+		return exists, nil
+	}
+
+	return true, nil
+}
+
+// AddShopToBloom 添加商铺ID到布隆过滤器
+func (c *CacheClient) AddShopToBloom(ctx context.Context, id int64) error {
+	if c.shopBloomFilter != nil {
+		return c.shopBloomFilter.AddInt64(ctx, id)
+	}
+	return nil
+}
+
+// AddVoucherToBloom 添加优惠券ID到布隆过滤器
+func (c *CacheClient) AddVoucherToBloom(ctx context.Context, id int64) error {
+	if c.voucherBloomFilter != nil {
+		return c.voucherBloomFilter.AddInt64(ctx, id)
+	}
+	return nil
+}
+
+// MarkShopDeleted 标记商铺为已删除（软删除）
+func (c *CacheClient) MarkShopDeleted(ctx context.Context, id int64) error {
+	c.whitelistMu.Lock()
+	if c.whitelistDeleted["shop"] == nil {
+		c.whitelistDeleted["shop"] = make(map[int64]bool)
+	}
+	c.whitelistDeleted["shop"][id] = true
+	c.whitelistMu.Unlock()
+
+	// 同时存入Redis白名单（跨进程共享）
+	return c.rdb.SAdd(ctx, "whitelist:shop:deleted", id).Err()
+}
+
+// MarkVoucherDeleted 标记优惠券为已删除
+func (c *CacheClient) MarkVoucherDeleted(ctx context.Context, id int64) error {
+	c.whitelistMu.Lock()
+	if c.whitelistDeleted["voucher"] == nil {
+		c.whitelistDeleted["voucher"] = make(map[int64]bool)
+	}
+	c.whitelistDeleted["voucher"][id] = true
+	c.whitelistMu.Unlock()
+
+	return c.rdb.SAdd(ctx, "whitelist:voucher:deleted", id).Err()
+}
+
+// IsShopDeleted 检查商铺是否已删除
+func (c *CacheClient) IsShopDeleted(ctx context.Context, id int64) (bool, error) {
+	// 先检查内存白名单
+	c.whitelistMu.RLock()
+	deleted, exists := c.whitelistDeleted["shop"][id]
+	c.whitelistMu.RUnlock()
+
+	if exists {
+		return deleted, nil
+	}
+
+	// 检查Redis白名单
+	return c.rdb.SIsMember(ctx, "whitelist:shop:deleted", id).Result()
 }
 
 // generateLockValue 生成锁的value（UUID）

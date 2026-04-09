@@ -1,8 +1,8 @@
 package repository
 
 import (
-	"hmdp-microservices/shop-service/model"
 	"gorm.io/gorm"
+	"hmdp-microservices/shop-service/model"
 )
 
 // ShopRepository 商铺仓库
@@ -59,4 +59,24 @@ func (r *ShopRepository) FindShopTypes() ([]*model.ShopType, error) {
 		return nil, err
 	}
 	return shopTypes, nil
+}
+
+// FindAllIDs 获取所有商铺ID（用于布隆过滤器预热）
+func (r *ShopRepository) FindAllIDs() ([]int64, error) {
+	var ids []int64
+	err := r.db.Model(&model.Shop{}).Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// FindAllVoucherIDs 获取所有优惠券ID（用于布隆过滤器预热）
+func (r *ShopRepository) FindAllVoucherIDs() ([]int64, error) {
+	var ids []int64
+	err := r.db.Model(&model.Voucher{}).Pluck("id", &ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
