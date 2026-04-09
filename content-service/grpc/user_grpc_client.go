@@ -19,10 +19,9 @@ type UserGrpcClient struct {
 }
 
 // NewUserGrpcClient 创建gRPC客户端
-func NewUserGrpcClient() (*UserGrpcClient, error) {
+func NewUserGrpcClient(etcdEndpoints []string, userServiceName string) (*UserGrpcClient, error) {
 	// 服务发现
-	etcdEndpoints := []string{"localhost:2379"}
-	discovery, err := etcd.NewServiceDiscovery(etcdEndpoints, "user-service")
+	discovery, err := etcd.NewServiceDiscovery(etcdEndpoints, userServiceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create service discovery: %w", err)
 	}

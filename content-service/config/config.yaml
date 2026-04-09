@@ -16,3 +16,13 @@ redis:
 
 grpc:
   port: "50053"
+
+etcd:
+  endpoints:
+    - "localhost:2379"
+  service:
+    host: "127.0.0.1"
+    name: "content-service"
+    ttl: 10
+  user_service:
+    name: "user-service"

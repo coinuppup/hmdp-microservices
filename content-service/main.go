@@ -29,6 +29,9 @@ func main() {
 
 	rdb := config.InitRedis(cfg)
 
+	// 初始化gRPC客户端配置
+	utils.InitUserGrpcClient(cfg.Etcd.Endpoints, cfg.Etcd.UserService.Name)
+
 	blogRepo := repository.NewBlogRepository(db)
 
 	blogService := service.NewBlogService(blogRepo, rdb)
@@ -37,9 +40,8 @@ func main() {
 	go startGRPCServer(blogService, followService, cfg.GRPC.Port)
 
 	// 注册服务到etcd
-	serviceAddr := "127.0.0.1:" + cfg.GRPC.Port
-	etcdEndpoints := []string{"localhost:2379"}
-	serviceRegister, err := etcd.NewServiceRegister(etcdEndpoints, "content-service", serviceAddr, 10)
+	serviceAddr := cfg.Etcd.Service.Host + ":" + cfg.GRPC.Port
+	serviceRegister, err := etcd.NewServiceRegister(cfg.Etcd.Endpoints, cfg.Etcd.Service.Name, serviceAddr, cfg.Etcd.Service.TTL)
 	if err != nil {
 		log.Fatalf("Failed to create service register: %v", err)
 	}

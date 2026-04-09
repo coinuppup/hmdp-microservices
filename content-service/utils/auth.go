@@ -12,15 +12,23 @@ import (
 )
 
 var (
-	userGrpcClient *grpc.UserGrpcClient
-	once           sync.Once
+	userGrpcClient  *grpc.UserGrpcClient
+	once            sync.Once
+	etcdEndpoints   []string
+	userServiceName string
 )
+
+// InitUserGrpcClient 初始化gRPC客户端配置
+func InitUserGrpcClient(endpoints []string, serviceName string) {
+	etcdEndpoints = endpoints
+	userServiceName = serviceName
+}
 
 // getUserGrpcClient 获取gRPC客户端(单例)
 func getUserGrpcClient() (*grpc.UserGrpcClient, error) {
 	var err error
 	once.Do(func() {
-		userGrpcClient, err = grpc.NewUserGrpcClient()
+		userGrpcClient, err = grpc.NewUserGrpcClient(etcdEndpoints, userServiceName)
 	})
 	return userGrpcClient, err
 }

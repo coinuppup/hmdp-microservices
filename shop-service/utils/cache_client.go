@@ -45,16 +45,18 @@ func (c *CacheClient) TryLock(ctx context.Context, key string) bool {
 
 // TryLockWithTTL 尝试获取分布式锁，指定TTL
 func (c *CacheClient) TryLockWithTTL(ctx context.Context, key string, ttl time.Duration) bool {
+	// 生成锁的value（UUID）作为唯一标识符
 	lockValue := c.generateLockValue()
 
-	// 使用 go-redis 的 SetNX 方法
-	// SetNX 返回 (bool, error)
+	// NX: key不存在时才设置（保证互斥）
+	// EX: 设置过期时间（防止死锁）
 	ok, err := c.rdb.SetNX(ctx, key, lockValue, ttl).Result()
 	if err != nil || !ok {
 		return false
 	}
 
 	// 保存本地映射，用于后续释放锁时校验
+	// 避免每一次释放锁的时候都要去查询redis获取value
 	c.localMu.Lock()
 	c.localLockValue[key] = lockValue
 	c.localMu.Unlock()
@@ -213,8 +215,6 @@ func (c *CacheClient) ReentrantUnlock(ctx context.Context, key string) error {
 // ============================================================
 
 // WatchdogLock 加锁并启动看门狗
-// 适用于业务执行时间不确定的场景
-// 看门狗会自动续期，直到业务执行完毕
 func (c *CacheClient) WatchdogLock(ctx context.Context, key string) bool {
 	lockValue := c.generateLockValue()
 	return c.WatchdogLockWithValue(ctx, key, lockValue)
