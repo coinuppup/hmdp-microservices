@@ -106,6 +106,19 @@ func startHTTPServer(blogService *service.BlogService, followService *service.Fo
 	r := gin.New()
 	r.Use(gin.Recovery())
 
+	// 手动添加CORS支持
+	r.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+		c.Header("Access-Control-Expose-Headers", "Content-Length")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
+
 	// 注册中间件
 	r.Use(utils.AuthMiddleware())
 

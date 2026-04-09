@@ -10,6 +10,7 @@ import (
 	"hmdp-microservices/common/etcd"
 	"hmdp-microservices/shop-service/config"
 	"hmdp-microservices/shop-service/controller"
+	"hmdp-microservices/shop-service/repository"
 	"hmdp-microservices/shop-service/service"
 
 	"github.com/gin-gonic/gin"
@@ -30,7 +31,8 @@ func main() {
 	rdb := config.InitRedis(cfg)
 
 	// 初始化服务
-	shopService := service.NewShopService(db, rdb)
+	shopRepo := repository.NewShopRepository(db)
+	shopService := service.NewShopService(db, rdb, shopRepo)
 	voucherService := service.NewVoucherService(db, rdb)
 	voucherOrderService := service.NewVoucherOrderService(db, rdb, cfg)
 
@@ -88,6 +90,19 @@ func startHTTPServer(shopService *service.ShopService, voucherService *service.V
 	// 初始化Gin
 	r := gin.New()
 	r.Use(gin.Recovery())
+
+	// 手动添加CORS支持
+	r.Use(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization")
+		c.Header("Access-Control-Expose-Headers", "Content-Length")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
 
 	// 创建控制器
 	shopController := controller.NewShopController(shopService)

@@ -9,7 +9,7 @@ mysql:
   dbname: "hmdp"
 
 redis:
-  host: "localhost"
+  host: "127.0.0.1"
   port: "6379"
   password: "001020"
   db: 0
