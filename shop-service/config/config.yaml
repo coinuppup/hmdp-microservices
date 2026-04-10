@@ -11,7 +11,7 @@ mysql:
 redis:
   host: "localhost"
   port: "6379"
-  password: "001020"
+  password: ""
   db: 0
 
 grpc:
@@ -21,6 +21,14 @@ kafka:
   brokers:
     - "localhost:9092"
   topic: "order-create"
+
+# 缓存失效相关配置
+cache:
+  invalidate-topic: "cache-invalidate"  # 缓存失效消息主题
+  binlog-topic: "db-binlog"              # 数据库binlog消息主题
+  enable-local-cache: true               # 启用本地缓存
+  local-cache-size: 10000                # 本地缓存大小
+  local-cache-ttl: 5m                    # 本地缓存TTL
 
 etcd:
   endpoints:

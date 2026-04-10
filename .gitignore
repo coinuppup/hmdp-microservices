@@ -1,2 +1,4 @@
 /.trae/
 /denpendency/
+*.exe
+*.log
