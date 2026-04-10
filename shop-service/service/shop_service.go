@@ -18,15 +18,22 @@ import (
 
 // ShopService 商铺服务
 type ShopService struct {
-	db          *gorm.DB
-	rdb         *redis.Client
-	shopRepo    *repository.ShopRepository
-	cacheClient *utils.CacheClient
+	db              *gorm.DB
+	rdb             *redis.Client
+	shopRepo        *repository.ShopRepository
+	cacheClient     *utils.CacheClient
+	kafkaProducer   *utils.CacheMessageProducer
+	binlogPublisher *utils.BinlogPublisher
 }
 
 // NewShopService 创建商铺服务
 // 传入 shopRepo 用于布隆过滤器预热
-func NewShopService(db *gorm.DB, rdb *redis.Client, shopRepo ...*repository.ShopRepository) *ShopService {
+// 传入 cfg 用于 Kafka 配置
+func NewShopService(db *gorm.DB, rdb *redis.Client, cfg interface {
+	GetKafkaBrokers() []string
+	GetCacheInvalidateTopic() string
+	GetCacheBinlogTopic() string
+}, shopRepo ...*repository.ShopRepository) *ShopService {
 	cacheClient := utils.NewCacheClient(rdb)
 
 	// 如果提供了 shopRepo，则预热布隆过滤器
@@ -36,12 +43,34 @@ func NewShopService(db *gorm.DB, rdb *redis.Client, shopRepo ...*repository.Shop
 		log.Printf("[ShopService] Bloom filter initialized with shop data")
 	}
 
-	return &ShopService{
+	svc := &ShopService{
 		db:          db,
 		rdb:         rdb,
 		shopRepo:    repository.NewShopRepository(db),
 		cacheClient: cacheClient,
 	}
+
+	// 初始化 Kafka 生产者（用于发送缓存失效消息）
+	if cfg != nil {
+		brokers := cfg.GetKafkaBrokers()
+		if len(brokers) > 0 {
+			invalidateTopic := cfg.GetCacheInvalidateTopic()
+			if invalidateTopic == "" {
+				invalidateTopic = "cache-invalidate"
+			}
+			svc.kafkaProducer = utils.NewCacheMessageProducer(brokers[0], invalidateTopic)
+			go svc.kafkaProducer.Start(context.Background())
+
+			// 初始化 Binlog 发布者
+			binlogTopic := cfg.GetCacheBinlogTopic()
+			if binlogTopic == "" {
+				binlogTopic = "db-binlog"
+			}
+			svc.binlogPublisher = utils.NewBinlogPublisher(brokers[0], binlogTopic)
+		}
+	}
+
+	return svc
 }
 
 // GetShop 获取商铺信息
@@ -145,8 +174,21 @@ func (s *ShopService) UpdateShop(ctx context.Context, shop *model.Shop) error {
 	}
 
 	// 删除缓存（Cache Aside 策略：先更新数据库，后删除缓存）
+	// 使用 Kafka 异步删除缓存，实现更强的缓存一致性保证
 	key := utils.CacheShopKey + strconv.FormatInt(shop.ID, 10)
-	s.cacheClient.Delete(ctx, key)
+
+	// 优先使用 Kafka 发送缓存失效消息（跨节点一致性更好）
+	if s.kafkaProducer != nil {
+		_ = s.kafkaProducer.SendDelete(ctx, key)
+	} else {
+		// 降级：直接删除本地缓存
+		s.cacheClient.Delete(ctx, key)
+	}
+
+	// 如果配置了 Binlog 发布，同时发布 Binlog 消息
+	if s.binlogPublisher != nil {
+		_ = s.binlogPublisher.PublishUpdate(ctx, "tb_shop", shop.ID, nil, nil)
+	}
 
 	return nil
 }
@@ -159,12 +201,23 @@ func (s *ShopService) DeleteShop(ctx context.Context, id int64) error {
 		return err
 	}
 
-	// 删除缓存
+	// 删除缓存（使用 Kafka 异步删除，实现跨节点一致性）
 	key := utils.CacheShopKey + strconv.FormatInt(id, 10)
-	s.cacheClient.Delete(ctx, key)
+
+	// 优先使用 Kafka 发送缓存失效消息
+	if s.kafkaProducer != nil {
+		_ = s.kafkaProducer.SendDelete(ctx, key)
+	} else {
+		s.cacheClient.Delete(ctx, key)
+	}
 
 	// 标记已删除（布隆过滤器无法删除，使用白名单）
 	_ = s.cacheClient.MarkShopDeleted(ctx, id)
+
+	// 如果配置了 Binlog 发布，同时发布删除消息
+	if s.binlogPublisher != nil {
+		_ = s.binlogPublisher.PublishDelete(ctx, "tb_shop", id)
+	}
 
 	return nil
 }

@@ -3,7 +3,7 @@ server:
 
 mysql:
   host: "127.0.0.1"
-  port: "3306"
+  port: "3307"
   user: "root"
   password: "001020"
   dbname: "hmdp"
@@ -11,7 +11,7 @@ mysql:
 redis:
   host: "127.0.0.1"
   port: "6379"
-  password: "001020"
+  password: ""
   db: 0
 
 grpc:

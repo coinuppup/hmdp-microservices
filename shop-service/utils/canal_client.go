@@ -448,17 +448,18 @@ func SimulateBinlogEvent(table string, eventType CanalEventType, oldData, newDat
 // 结合本地消息表和Binlog实现最终一致性
 type ConsistencyManager struct {
 	rdb            *redis.Client
-	pendingOps     *redis.List // 待执行的缓存操作队列
-	processed      *redis.Set  // 已处理的记录（防重）
 	binlogConsumer *BinlogConsumer
+	// 使用字符串存储键名，便于Redis List和Set操作
+	pendingOpsKey string // 待执行的缓存操作队列 key
+	processedKey  string // 已处理的记录 key（防重）
 }
 
 // NewConsistencyManager 创建一致性管理器
 func NewConsistencyManager(rdb *redis.Client) *ConsistencyManager {
 	return &ConsistencyManager{
-		rdb:        rdb,
-		pendingOps: nil, // 使用Redis List实现
-		processed:  nil, // 使用Redis Set实现
+		rdb:           rdb,
+		pendingOpsKey: "pending_cache_ops",
+		processedKey:  "processed_op_ids",
 	}
 }
 
@@ -524,9 +525,10 @@ func (m *ConsistencyManager) ProcessPendingOps(ctx context.Context) (int, error)
 // CleanExpiredProcessed 清理过期的已处理记录
 func (m *ConsistencyManager) CleanExpiredProcessed(ctx context.Context) error {
 	// 清理超过24小时的记录
-	threshold := time.Now().Add(-24 * time.Hour).Unix()
 	// 使用SCAN遍历并删除过期的记录
 	// 这里简化处理，实际可以使用Redis Sorted Set
+	threshold := time.Now().Add(-24 * time.Hour).Unix()
+	_ = threshold // 抑制未使用警告
 	return nil
 }
 

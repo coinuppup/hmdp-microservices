@@ -32,7 +32,7 @@ func main() {
 
 	// 初始化服务
 	shopRepo := repository.NewShopRepository(db)
-	shopService := service.NewShopService(db, rdb, shopRepo)
+	shopService := service.NewShopService(db, rdb, cfg, shopRepo)
 	voucherService := service.NewVoucherService(db, rdb)
 	voucherOrderService := service.NewVoucherOrderService(db, rdb, cfg)
 

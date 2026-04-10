@@ -15,6 +15,7 @@ type Config struct {
 	GRPC   GRPCConfig   `mapstructure:"grpc"`
 	Kafka  KafkaConfig  `mapstructure:"kafka"`
 	Etcd   EtcdConfig   `mapstructure:"etcd"`
+	Cache  CacheConfig  `mapstructure:"cache"`
 }
 
 // EtcdConfig Etcd配置
@@ -61,6 +62,15 @@ type GRPCConfig struct {
 type KafkaConfig struct {
 	Brokers []string `mapstructure:"brokers"`
 	Topic   string   `mapstructure:"topic"`
+}
+
+// CacheConfig 缓存配置
+type CacheConfig struct {
+	InvalidateTopic  string `mapstructure:"invalidate-topic"`   // 缓存失效消息主题
+	BinlogTopic      string `mapstructure:"binlog-topic"`       // 数据库binlog消息主题
+	EnableLocalCache bool   `mapstructure:"enable-local-cache"` // 启用本地缓存
+	LocalCacheSize   int    `mapstructure:"local-cache-size"`   // 本地缓存大小
+	LocalCacheTTL    string `mapstructure:"local-cache-ttl"`    // 本地缓存TTL
 }
 
 // Load 加载配置
@@ -111,6 +121,13 @@ func getDefaultConfig() *Config {
 			Brokers: []string{"localhost:9092"},
 			Topic:   "order-create",
 		},
+		Cache: CacheConfig{
+			InvalidateTopic:  "cache-invalidate",
+			BinlogTopic:      "db-binlog",
+			EnableLocalCache: true,
+			LocalCacheSize:   10000,
+			LocalCacheTTL:    "5m",
+		},
 		Etcd: EtcdConfig{
 			Endpoints: []string{"localhost:2379"},
 			Service: EtcdServiceConfig{
@@ -131,4 +148,19 @@ func (c *MySQLConfig) GetDSN() string {
 // GetRedisAddr 获取Redis连接地址
 func (c *RedisConfig) GetRedisAddr() string {
 	return fmt.Sprintf("%s:%s", c.Host, c.Port)
+}
+
+// GetKafkaBrokers 获取Kafka broker地址
+func (c *Config) GetKafkaBrokers() []string {
+	return c.Kafka.Brokers
+}
+
+// GetCacheInvalidateTopic 获取缓存失效消息主题
+func (c *Config) GetCacheInvalidateTopic() string {
+	return c.Cache.InvalidateTopic
+}
+
+// GetCacheBinlogTopic 获取Binlog消息主题
+func (c *Config) GetCacheBinlogTopic() string {
+	return c.Cache.BinlogTopic
 }
