@@ -1,5 +1,13 @@
-/.trae/
-/denpendency/
+# Go
 *.exe
 *.log
 /volumes/
+/denpendency/
+/.trae/
+
+# 前端
+/front/node_modules/
+/front/dist/
+/front/.vite/
+/front/.env.local
+/front/*.log
