@@ -1457,3 +1457,4 @@ setInterval(() => ws.send('ping'), 30000);
 这些功能涵盖了Redis的多种数据结构：String、Hash、List、Set、ZSet、BitMap、GEO、HyperLogLog，是非常好的Redis实践案例。
 
 面试过程中，这些功能的实现细节、Redis数据结构选择、性能优化、场景设计方案都是高频考点。建议读者深入理解每个功能的实现原理，并能够举一反三应用到其他场景中。
+
