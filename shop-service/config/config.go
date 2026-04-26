@@ -16,6 +16,7 @@ type Config struct {
 	Kafka  KafkaConfig  `mapstructure:"kafka"`
 	Etcd   EtcdConfig   `mapstructure:"etcd"`
 	Cache  CacheConfig  `mapstructure:"cache"`
+	Canal  CanalConfig  `mapstructure:"canal"`
 }
 
 // EtcdConfig Etcd配置
@@ -73,6 +74,18 @@ type CacheConfig struct {
 	LocalCacheTTL    string `mapstructure:"local-cache-ttl"`    // 本地缓存TTL
 }
 
+// CanalConfig Canal配置
+type CanalConfig struct {
+	Server     string `mapstructure:"server"`       // Canal服务端地址
+	Destination string `mapstructure:"destination"` // Canal实例名
+	Username   string `mapstructure:"username"`     // Canal用户名
+	Password   string `mapstructure:"password"`     // Canal密码
+	Filter     string `mapstructure:"filter"`       // 过滤规则
+	BatchSize  int    `mapstructure:"batch-size"`  // 批量获取大小
+	Timeout    int    `mapstructure:"timeout"`     // 超时时间(秒)
+	Enabled    bool   `mapstructure:"enabled"`      // 是否启用Canal
+}
+
 // Load 加载配置
 func Load() *Config {
 	viper.SetConfigName("config")
@@ -128,6 +141,16 @@ func getDefaultConfig() *Config {
 			LocalCacheSize:   10000,
 			LocalCacheTTL:    "5m",
 		},
+		Canal: CanalConfig{
+			Server:      "127.0.0.1:11111",
+			Destination: "example",
+			Username:    "canal",
+			Password:    "canal",
+			Filter:      "hmdp\\..*",
+			BatchSize:   1000,
+			Timeout:     60,
+			Enabled:     false,
+		},
 		Etcd: EtcdConfig{
 			Endpoints: []string{"localhost:2379"},
 			Service: EtcdServiceConfig{
@@ -163,4 +186,14 @@ func (c *Config) GetCacheInvalidateTopic() string {
 // GetCacheBinlogTopic 获取Binlog消息主题
 func (c *Config) GetCacheBinlogTopic() string {
 	return c.Cache.BinlogTopic
+}
+
+// IsCanalEnabled 检查Canal是否启用
+func (c *Config) IsCanalEnabled() bool {
+	return c.Canal.Enabled
+}
+
+// GetCanalConfig 获取Canal配置
+func (c *Config) GetCanalConfig() CanalConfig {
+	return c.Canal
 }

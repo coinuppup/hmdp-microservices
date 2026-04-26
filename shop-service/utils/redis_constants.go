@@ -22,6 +22,10 @@ const (
 	CacheVoucherKey = "cache:voucher:"
 	CacheVoucherTTL = 30 // 30分钟
 
+	// 用户缓存
+	CacheUserKey = "cache:user:"
+	CacheUserTTL = 30 // 30分钟
+
 	// 秒杀
 	SeckillVoucherStockKey = "seckill:stock:"
 	SeckillVoucherOrderKey = "seckill:order:"
