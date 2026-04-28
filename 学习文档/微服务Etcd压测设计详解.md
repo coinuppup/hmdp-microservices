@@ -1523,8 +1523,15 @@ func (d *ServiceDiscovery) refreshServiceList() error {
 | 端口 | 3307 | 项目配置文件指定 |
 | 内存 | 512MB | Docker容器限制 |
 | 缓冲池 | 128MB | `innodb_buffer_pool_size` |
-| 最大连接数 | 100 | 压测时临时调大 |
+| 最大连接数 | 100 | GORM连接池配置 |
 | 存储引擎 | InnoDB | 支持事务 |
+
+项目中的数据库连接池配置（shop-service/config/db.go）：
+```go
+sqlDB, err := db.DB()
+sqlDB.SetMaxOpenConns(100)   // 最大打开连接数
+sqlDB.SetMaxIdleConns(10)    // 最大空闲连接数
+```
 
 **为什么数据库配置这么低还能扛5000 QPS？** 因为我的秒杀接口根本不走数据库！所有请求先在Redis扣减库存，只有扣减成功的（约1%）才发Kafka消息异步写库。数据库压力降低了99%。
 
@@ -1615,7 +1622,38 @@ reader := kafka.NewReader(kafka.ReaderConfig{
 
 #### 二、压测方案设计（参数为什么这样设置）
 
-**第一步：压测工具选择**
+##### 第一步：问题发现与优化思路
+
+在设计压测方案之前，我先分析了一下可能遇到的性能瓶颈。
+
+**Q：为什么不做连接池优化？**
+
+这是一个很好的问题。我先讲讲什么是TIME_WAIT：
+
+TCP协议规定，主动关闭连接的一方，在断开连接后，不能马上把这个端口彻底释放，必须保持TIME_WAIT状态一段时间（通常是60秒）。这是为了确保网络中残留的旧数据包全部消失，防止它们干扰下一次的新连接。
+
+如果使用短连接（每次请求都新建数据库连接，用完就关闭），在高并发场景下：
+- 每秒500个请求 → 每秒建立500个连接 → 每秒关闭500个连接
+- 关闭的连接进入TIME_WAIT状态，60秒后才释放
+- 积压的连接数：500 × 60 = 30000个
+- 端口总数只有65535个，很快就会被耗尽
+
+**解决方案：连接池复用**
+
+项目中使用GORM连接池：
+```go
+sqlDB.SetMaxOpenConns(100)   // 最大打开100个连接
+sqlDB.SetMaxIdleConns(10)    // 保持10个空闲连接
+```
+
+连接池的优势：
+1. **没有关闭就没有TIME_WAIT**：连接用完就还给池子，没有真正断开TCP连接
+2. **复用**：第1个请求用完的连接，第2个请求接着用
+3. **降低开销**：不需要频繁进行TCP握手/挥手
+
+这就是为什么我们的服务能扛5000 QPS——连接池避免了端口耗尽问题。
+
+##### 第二步：压测工具选择
 
 我用的是wrk。选它的原因有三个：
 
@@ -1631,7 +1669,7 @@ reader := kafka.NewReader(kafka.ReaderConfig{
 | JMeter | 功能全面 | 重量级 | 生产环境用 |
 | Locust | Python脚本 | 性能较低 | 仿真测试用 |
 
-**第二步：参数设计（核心！面试常问）**
+**第三步：参数设计（核心！面试常问）**
 
 我设置的是：**12线程 + 400并发 + 30秒 + 1000库存**
 
@@ -1678,7 +1716,7 @@ reader := kafka.NewReader(kafka.ReaderConfig{
 | 时长 | 30秒 | 预热充分+持续观察+不浪费 |
 | 库存 | 1000件 | 5000请求vs1000库存，验证超卖 |
 
-**第三步：压测脚本设计**
+**第四步：压测脚本设计**
 
 ```lua
 -- seckill.lua 秒杀压测脚本
@@ -1693,6 +1731,35 @@ wrk.headers["Authorization"] = "Bearer test-token"
 - **固定优惠券ID**：测试特定秒杀活动
 - **POST请求**：比GET更符合秒杀场景
 - **添加Token**：绕过拦截器（项目中有效 token 才能调用）
+
+项目中实际的Lua脚本实现（shop-service/service/voucher_order_service.go）：
+
+```go
+// 一、Lua脚本原子执行：一人一单检查 + 添加下单集合
+onePersonOneOrderScript := redis.NewScript(`
+    if redis.call('sismember', KEYS[1], ARGV[1]) == 1 then
+        return -1
+    end
+    return redis.call('sadd', KEYS[1], ARGV[1])
+`)
+
+// 二、Lua脚本原子执行：库存扣减 + 检查
+stockScript := redis.NewScript(`
+    local stock = redis.call('get', KEYS[1])
+    if stock == false then
+        return -1
+    end
+    if tonumber(stock) <= 0 then
+        return -2
+    end
+    return redis.call('decr', KEYS[1])
+`)
+```
+
+使用Lua脚本的原因：
+- **原子性**：高并发场景下，SISMEMBER + SADD 不是原子操作，可能导致重复下单
+- **原子性**：GET + DECR 不是原子操作，可能导致超卖
+- Lua脚本在Redis单线程中执行，整个过程作为原子操作完成
 
 ---
 
@@ -1821,6 +1888,13 @@ Running 30s test @ http://localhost:8082/api/voucher/seckill
 1. **Redis拦截流量**：99%请求在Redis层被拦截，不打数据库
 2. **Lua原子操作**：检查+扣减原子完成，无锁竞争
 3. **Kafka异步**：主流程不等待数据库，立即返回
+
+**关于连接池的额外说明：**
+
+除了上述优化，连接池也是关键：
+- 如果每次请求都新建数据库连接，会产生大量TIME_WAIT
+- 项目使用GORM连接池（MaxOpenConns=100, MaxIdleConns=10）
+- 连接复用避免端口耗尽，保证高并发下系统稳定
 
 ---
 
