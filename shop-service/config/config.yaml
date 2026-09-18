@@ -37,3 +37,14 @@ etcd:
     host: "127.0.0.1"
     name: "shop-service"
     ttl: 10
+
+# Canal配置
+canal:
+  server: "127.0.0.1:11111"        # Canal服务端地址
+  destination: "example"             # Canal实例名
+  username: "canal"                # Canal用户名
+  password: "canal"                # Canal密码
+  filter: "hmdp\\..*"              # 过滤规则：监听hmdp数据库所有表
+  batch-size: 1000                 # 批量获取大小
+  timeout: 60                     # 超时时间(秒)
+  enabled: true                    # 是否启用Canal
